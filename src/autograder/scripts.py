@@ -6,8 +6,9 @@ from typing import ClassVar, Self
 from autograder.core import add_grading_page
 from pydantic import BaseModel, EmailStr
 from rich.console import Console
+from rich.prompt import Confirm, Prompt
 from rich.theme import Theme
-from typer import Typer, confirm, get_app_dir, launch, prompt
+from typer import Abort, Typer, get_app_dir, launch
 
 APP_NAME = "moodle_pdf_autograder"
 theme = Theme({
@@ -33,9 +34,11 @@ class AppConfig(BaseModel):
         path = cls.location
         if path.is_file():
             return cls.model_validate_json(path.read_text())
-        name = prompt("What name do you want to use?")
-        email = prompt(
-            "What email address do you want to use?", default=f"{".".join(name.lower().split())}@rwth-aachen.de"
+        name = Prompt.ask("What name do you want to use?", console=console)
+        email = Prompt.ask(
+            "What email address do you want to use?",
+            default=f"{".".join(name.lower().split())}@rwth-aachen.de",
+            console=console,
         )
         config = cls(name=name, email=email)
         config.save()
@@ -49,7 +52,11 @@ class AppConfig(BaseModel):
 @app.command()
 def config():
     if not AppConfig.location.is_file():
-        confirm("The config file does not exist yet, do you want to create it?", default=True, abort=True)
+        res = Confirm.ask(
+            "[attention]The config file does not exist yet, do you want to create it?", default=True, console=console
+        )
+        if not res:
+            raise Abort
         AppConfig.get()
     launch(str(AppConfig.location))
 
