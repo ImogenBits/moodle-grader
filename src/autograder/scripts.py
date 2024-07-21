@@ -21,7 +21,7 @@ app = Typer(pretty_exceptions_show_locals=True)
 
 @app.command()
 def main(student_file: Path):
-    add_grading_page(student_file, student_file.with_name(f"new_{student_file.name}"))
+    add_grading_page(student_file, "Imogen Hergeth", "imogen.hergeth@rwth-aachen.de", student_file.with_name(f"new_{student_file.name}"))
 
 
 if __name__ == "__main__":
