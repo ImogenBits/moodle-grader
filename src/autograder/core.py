@@ -1,23 +1,47 @@
 from io import BytesIO
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from pypdf import PdfReader, PdfWriter
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import cm
+from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.pdfgen.canvas import Canvas
 from reportlab.platypus import Paragraph
 
+if TYPE_CHECKING:
+    from reportlab.pdfbase.acroform import AcroForm
+
+points_label = "Gesamtpunkte:"
 text = """Korrigiert von {name}.<br/>
 Bei Fragen gerne eine mail an <a color="blue" href="mailto:{email}">{email}</a> schicken."""
+style = ParagraphStyle("Normal", linkUnderline=True, fontSize=12)
 
 
 def draw_grading_page(canvas: Canvas, name: str, email: str) -> None:
-    canvas.translate(4 * cm, 25 * cm)
-    para = Paragraph(text.format(name=name, email=email), ParagraphStyle('Normal', linkUnderline=True))
-    _, height = para.wrap(20 * cm, 10 * cm)
-    para.drawOn(canvas, 0, -height)
+    x, y = 4 * cm, 25 * cm
+    width, height = 20 * cm, 10 * cm
+    canvas.translate(x, y)
 
+    para = Paragraph(points_label, style)
+    para.wrap(width, height)
+    para.drawOn(canvas, 0, 0)
+    indent = stringWidth(points_label, style.fontName, style.fontSize)
+    form: AcroForm = canvas.acroForm
+    form.textfield(
+        relative=True,
+        x=int(indent + 0.25 * cm),
+        y=-2,
+        height=int(style.fontSize) + 4,
+        width=int(style.fontSize * 3),
+        name="moodleGradeField",
+        tooltip="total points achieved in this assignment",
+    )
+
+    para = Paragraph(text.format(name=name, email=email), style)
+    _, height = para.wrap(width, height)
+    para.drawOn(canvas, 0, - 1 * cm)
 
 
 def add_grading_page(student_file: Path, name: str, email: str, output: Path | None = None) -> None:
