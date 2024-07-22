@@ -77,8 +77,9 @@ def config():
 
 
 class StudentInfo(BaseModel):
-    points: float | None = None
+    points: float | None
     original_name: str
+    pdf_location: Path | None = None
 
 
 StudentData = TypeAdapter(dict[str, StudentInfo])
@@ -151,13 +152,23 @@ def unpack(
     student_data = dict[str, StudentInfo]()
     for path in track(list(output.iterdir()), description="Formatting student files"):
         identifier = infos[path.name].get_id(infos.values())
-        student_data[identifier] = StudentInfo(original_name=path.name)
+        student_data[identifier] = StudentInfo(original_name=path.name, points=None)
         new_path = path.with_name(identifier).with_suffix(path.suffix)
-        add_grading_page(path, config.name, config.email, new_path)
-        if new_path.name != path.name:
-            path.unlink()
+        if path.is_file() and path.suffix == ".pdf":
+            add_grading_page(path, config.name, config.email, new_path)
+            if new_path.name != path.name:
+                path.unlink()
+        elif path.is_dir():
+            path.rename(new_path)
+            for file in new_path.iterdir():
+                if file.is_file() and file.suffix == ".pdf":
+                    add_grading_page(file, config.name, config.email)
+                    student_data[identifier].pdf_location = file.relative_to(path)
+                    break
 
-    output.joinpath("student_data.json").write_bytes(StudentData.dump_json(student_data, indent=2))
+    output.joinpath("student_data.json").write_bytes(
+        StudentData.dump_json(student_data, indent=2, exclude_defaults=True)
+    )
 
 
 if __name__ == "__main__":
