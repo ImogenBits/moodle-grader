@@ -16,13 +16,13 @@ if TYPE_CHECKING:
 
 getLogger("pypdf").setLevel(50)
 points_label = "Gesamtpunkte:"
-text = """Korrigiert von {name}.<br/>
-Bei Fragen gerne eine mail an <a color="blue" href="mailto:{email}">{email}</a> schicken."""
+text = """Korrigiert von {name}<br/>
+Bei Fragen könnt ihr gerne eine mail an <a color="blue" href="mailto:{email}">{email}</a> schicken"""
 style = ParagraphStyle("Normal", linkUnderline=True, fontSize=12, leading=15)
 
 
 def draw_grading_page(canvas: Canvas, name: str, email: str) -> None:
-    x, y = 4 * cm, 25 * cm
+    x, y = 2.5 * cm, 25 * cm
     width, height = 20 * cm, 10 * cm
     canvas.translate(x, y)
 
@@ -34,8 +34,8 @@ def draw_grading_page(canvas: Canvas, name: str, email: str) -> None:
     form.textfield(
         relative=True,
         x=int(indent + 0.25 * cm),
-        y=-2,
-        height=int(style.fontSize) + 4,
+        y=0,
+        height=int(style.fontSize) + 2,
         width=int(style.fontSize * 3),
         name="moodleGradeField",
         tooltip="total points achieved in this assignment",
