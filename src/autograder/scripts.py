@@ -64,7 +64,7 @@ def rmtree(path: Path) -> None:
         path.rmdir()
 
 
-@app.command()
+@app.command(help="Opens the config file.")
 def config():
     if not AppConfig.location.is_file():
         res = Confirm.ask(
@@ -104,11 +104,11 @@ class MatchInfo:
         return out
 
 
-@app.command()
+@app.command(
+    help="Unpacks a zip file containing the student's submissions."
+)
 def unpack(
-    student_file: Annotated[
-        Path, Argument(help="the zip file containing the student's submissions, as downloaded from moodle")
-    ],
+    student_file: Annotated[Path, Argument(help="the file containing the student's submissions")],
     output: Annotated[
         Path,
         Option("--out", "-o", help="the output folder", file_okay=False, writable=True),
