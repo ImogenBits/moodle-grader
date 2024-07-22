@@ -4,10 +4,10 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, ClassVar, Optional, Self
+from typing import Annotated, ClassVar, Optional, Self  # pyright: ignore[reportDeprecated]
 from zipfile import ZipFile
 
-from autograder.core import add_grading_page
+from autograder.core import add_grading_page, get_points, set_points
 from pydantic import BaseModel, EmailStr, TypeAdapter
 from rich.console import Console
 from rich.progress import track
@@ -20,7 +20,7 @@ theme = Theme({
     "success": "green",
     "warning": "orange3",
     "error": "red",
-    "attention": "magenta2",
+    "attention": "purple3",
     "heading": "blue",
     "info": "dim cyan",
 })
@@ -104,9 +104,7 @@ class MatchInfo:
         return out
 
 
-@app.command(
-    help="Unpacks a zip file containing the student's submissions."
-)
+@app.command(help="Unpacks a zip file containing the student's submissions.")
 def unpack(
     student_file: Annotated[Path, Argument(help="the file containing the student's submissions")],
     output: Annotated[
@@ -131,7 +129,7 @@ def unpack(
         raise Abort("The chosen output folder already exists and is a file")
     elif next(output.iterdir(), None):
         res = Confirm.ask(
-            f"[warning]The chosen output folder ({output}) already exists![/]\nDo you want to replace it?",
+            f"[attention]The chosen output folder ({output}) already exists![/]\nDo you want to replace it?",
             default=False,
             console=console,
         )
@@ -148,9 +146,9 @@ def unpack(
     for path in output.iterdir():
         while not (match := regex.search(path.name)):
             new_pattern = Prompt.ask(
-                f"[error]Could not find a student identifier in '{path.name}'[/], do you want to update the identifier "
-                "pattern?\nIt must be a regex string with either a single capture group uniquely identifying the "
-                "submission or two named groups 'group' and (optionally) 'tutorial'.",
+                f"[attention]Could not find a student identifier in '{path.name}'[/], do you want to update the "
+                "identifier pattern?\nIt must be a regex string with either a single capture group uniquely identifying "
+                "the submission or two named groups 'group' and (optionally) 'tutorial'.",
                 default=config.id_pattern,
                 console=console,
             )
@@ -190,6 +188,49 @@ def unpack(
     output.joinpath("student_data.json").write_bytes(
         StudentData.dump_json(student_data, indent=2, exclude_defaults=True)
     )
+
+
+@app.command()
+def finalize(
+    data_file: Annotated[
+        Path, Option(help="Path to the `student_data.json` file.", exists=True, dir_okay=False)
+    ] = Path("assignments/data_file.json"),
+    output: Annotated[
+        Path | None,
+        Option("--output", "-o", help="Path to the created feedback file zip.", exists=False),
+    ] = None,
+):
+    data = StudentData.validate_json(data_file.read_text())
+    output = output or data_file.with_name("feedback_files.zip")
+    if output.exists():
+        res = Confirm.ask(
+            f"[attention]There already is a file at '{output}'[/], do you want to replace it?",
+            console=console,
+            default=False,
+        )
+        if not res:
+            raise Abort
+        rmtree(output)
+    with ZipFile(output, "x") as feedback_zip:
+        for identifier, info in data.items():
+            path = info.pdf_location or data_file.with_name(identifier).with_suffix(".pdf")
+            pdf_points = get_points(path)
+            if info.points is not None and info.points != pdf_points:
+                info.points = float(
+                    Prompt.ask(
+                        f"[attention]Group '{identifier}' has {info.points} points in the data file, but {pdf_points} in the pdf.[/] "
+                        "Which value do you want to use?",
+                        choices=[str(info.points), str(pdf_points)],
+                        default=str(pdf_points),
+                        console=console,
+                    )
+                )
+                if pdf_points != info.points:
+                    set_points(path, info.points)
+            else:
+                info.points = pdf_points
+            feedback_zip.write(path, Path(info.original_name).with_suffix(".pdf"))
+    data_file.write_bytes(StudentData.dump_json(data, indent=2, exclude_defaults=True))
 
 
 if __name__ == "__main__":

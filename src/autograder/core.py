@@ -3,7 +3,7 @@ from logging import getLogger
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from pypdf import PdfWriter
+from pypdf import PdfReader, PdfWriter
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import cm
@@ -69,3 +69,15 @@ def add_grading_page(student_file: Path, name: str, email: str, image: Path | No
         pdf_file.merge(0, fileobj=bytes_io)
 
     pdf_file.write(output or student_file)
+
+
+def get_points(student_file: Path) -> float | None:
+    file = PdfReader(student_file)
+    data = file.get_form_text_fields().get("moodleGradeField")
+    return float(data) if data else None
+
+
+def set_points(student_file: Path, points: float) -> None:
+    file = PdfWriter(clone_from=student_file)
+    file.update_page_form_field_values(file.pages[0], {"moodleGradeField": str(points)}, auto_regenerate=False)
+    file.write(student_file)
