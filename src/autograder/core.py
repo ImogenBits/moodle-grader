@@ -1,8 +1,9 @@
 from io import BytesIO
+from logging import getLogger
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from pypdf import PdfReader, PdfWriter
+from pypdf import PdfWriter
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import cm
@@ -13,6 +14,7 @@ from reportlab.platypus import Paragraph
 if TYPE_CHECKING:
     from reportlab.pdfbase.acroform import AcroForm
 
+getLogger("pypdf").setLevel(50)
 points_label = "Gesamtpunkte:"
 text = """Korrigiert von {name}.<br/>
 Bei Fragen gerne eine mail an <a color="blue" href="mailto:{email}">{email}</a> schicken."""
@@ -46,14 +48,12 @@ def draw_grading_page(canvas: Canvas, name: str, email: str) -> None:
 
 def add_grading_page(student_file: Path, name: str, email: str, output: Path | None = None) -> None:
     pdf_file = PdfWriter(clone_from=student_file)
-    pdf_file.insert_blank_page()
 
     with BytesIO() as bytes_io:
         canvas = Canvas(bytes_io, pagesize=A4)
         draw_grading_page(canvas, name, email)
         canvas.save()
         bytes_io.seek(0)
-        new_pdf = PdfReader(bytes_io)
-        pdf_file.pages[0].merge_page(new_pdf.pages[0])
+        pdf_file.merge(0, fileobj=bytes_io)
 
     pdf_file.write(output or student_file)
