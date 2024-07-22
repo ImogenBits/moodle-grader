@@ -1,14 +1,19 @@
 """Autograder scripts."""
 
+import re
+from collections.abc import Iterable
+from dataclasses import dataclass
 from pathlib import Path
-from typing import ClassVar, Self
+from typing import Annotated, ClassVar, Self
+from zipfile import ZipFile
 
 from autograder.core import add_grading_page
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, TypeAdapter
 from rich.console import Console
+from rich.progress import track
 from rich.prompt import Confirm, Prompt
 from rich.theme import Theme
-from typer import Abort, Typer, get_app_dir, launch
+from typer import Abort, Argument, Option, Typer, get_app_dir, launch
 
 APP_NAME = "moodle_pdf_autograder"
 theme = Theme({
@@ -26,6 +31,7 @@ app = Typer(pretty_exceptions_show_locals=True)
 class AppConfig(BaseModel):
     name: str
     email: EmailStr
+    id_pattern: str = r"(?:[tT]ut(?:orium)? (?P<tutorial>\d+))?.*[gG]ruppe (?P<group>\d+)"
 
     location: ClassVar[Path] = Path(get_app_dir(APP_NAME)) / "config.json"
 
@@ -49,6 +55,15 @@ class AppConfig(BaseModel):
         self.location.write_text(self.model_dump_json(indent=2))
 
 
+def rmtree(path: Path) -> None:
+    if path.is_file():
+        path.unlink()
+    else:
+        for child in path.iterdir():
+            rmtree(child)
+        path.rmdir()
+
+
 @app.command()
 def config():
     if not AppConfig.location.is_file():
@@ -61,10 +76,88 @@ def config():
     launch(str(AppConfig.location))
 
 
+class StudentInfo(BaseModel):
+    points: float | None = None
+    original_name: str
+
+
+StudentData = TypeAdapter(dict[str, StudentInfo])
+
+
+@dataclass
+class MatchInfo:
+    group: str
+    tutorial: str | None
+
+    @classmethod
+    def from_match(cls, match: re.Match[str]) -> Self:
+        if len(match.groups()) == 1:
+            return cls(match.group(0), None)
+        groups = match.groupdict()
+        return cls(groups["group"], groups.get("tutorial"))
+
+    def get_id(self, all_infos: Iterable[Self]) -> str:
+        out = f"gruppe {self.group}"
+        if self.tutorial is not None and any(i != self and i.group == self.group for i in all_infos):
+            out += f" tut {self.tutorial}"
+        return out
+
+
 @app.command()
-def unpack(student_file: Path):
+def unpack(
+    student_file: Annotated[
+        Path, Argument(help="the zip file containing the student's submissions, as downloaded from moodle")
+    ],
+    output: Annotated[
+        Path,
+        Option("--out", "-o", help="the output folder", file_okay=False, writable=True),
+    ] = Path() / "assignments",
+):
     config = AppConfig.get()
-    add_grading_page(student_file, config.name, config.email, student_file.with_name(f"new_{student_file.name}"))
+    if not output.exists():
+        output.mkdir(parents=True)
+    elif output.is_file():
+        raise Abort("The chosen output folder already exists and is a file")
+    elif next(output.iterdir(), None):
+        res = Confirm.ask(
+            f"[warning]The chosen output folder ({output}) already exists![/]\nDo you want to replace it?",
+            default=False,
+            console=console,
+        )
+        if not res:
+            raise Abort
+        rmtree(output)
+        output.mkdir(exist_ok=True)
+    regex = re.compile(config.id_pattern)
+
+    with ZipFile(student_file) as file:
+        file.extractall(output)
+
+    infos: dict[str, MatchInfo] = {}
+    for path in output.iterdir():
+        while not (match := regex.search(path.name)):
+            new_pattern = Prompt.ask(
+                f"[error]Could not find a student identifier in '{path.name}'[/], do you want to update the identifier "
+                "pattern?\nIt must be a regex string with either a single capture group uniquely identifying the "
+                "submission or two named groups 'group' and (optionally) 'tutorial'.",
+                default=config.id_pattern,
+                console=console,
+            )
+            config.id_pattern = new_pattern
+            config.save()
+            regex = re.compile(new_pattern)
+        infos[path.name] = MatchInfo.from_match(match)
+
+    student_data = dict[str, StudentInfo]()
+    for path in track(list(output.iterdir()), description="Formatting student files"):
+        identifier = infos[path.name].get_id(infos.values())
+        student_data[identifier] = StudentInfo(original_name=path.name)
+        new_path = path.with_name(identifier).with_suffix(path.suffix)
+        add_grading_page(path, config.name, config.email, new_path)
+        if new_path.name != path.name:
+            path.unlink()
+
+    output.joinpath("student_data.json").write_bytes(StudentData.dump_json(student_data, indent=2))
 
 
 if __name__ == "__main__":
