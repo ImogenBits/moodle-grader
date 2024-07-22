@@ -3,12 +3,13 @@
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
+from functools import cached_property
 from pathlib import Path
 from typing import Annotated, ClassVar, Optional, Self  # pyright: ignore[reportDeprecated]
 from zipfile import ZipFile
 
 from autograder.core import add_grading_page, get_points, set_points
-from pydantic import BaseModel, EmailStr, TypeAdapter
+from pydantic import BaseModel, EmailStr, Field
 from rich.console import Console
 from rich.progress import track
 from rich.prompt import Confirm, Prompt
@@ -31,7 +32,7 @@ app = Typer(pretty_exceptions_show_locals=True)
 class AppConfig(BaseModel):
     name: str
     email: EmailStr
-    id_pattern: str = r"(?:[tT]ut(?:orium)? (?P<tutorial>\d+))?.*[gG]ruppe (?P<group>\d+)"
+    default_identifier_column: str = "Group"
 
     location: ClassVar[Path] = Path(get_app_dir(APP_NAME)) / "config.json"
 
@@ -78,29 +79,57 @@ def config():
 
 class StudentInfo(BaseModel):
     points: float | None
-    original_name: str
-    pdf_location: Path | None = None
+    pdf_location: Path
+    feedback_location: Path
 
 
-StudentData = TypeAdapter(dict[str, StudentInfo])
+class StudentData(BaseModel):
+    identifier_column: str
+    data: dict[str, StudentInfo] = Field(default_factory=dict)
 
 
-@dataclass
-class MatchInfo:
-    group: str
-    tutorial: str | None
+@dataclass(frozen=True)
+class MoodleFileData:
+    name: str
+    identifier: str
+    file_type: str
+    file_name: str
+    suffix: str
+
+    group_pattern: ClassVar[re.Pattern[str]] = re.compile(r"[gG]ruppe (\d+)")
+    tut_pattern: ClassVar[re.Pattern[str]] = re.compile(r"[tT]ut(?:orium)? (\d+)")
 
     @classmethod
-    def from_match(cls, match: re.Match[str]) -> Self:
-        if len(match.groups()) == 1:
-            return cls(match.group(0), None)
-        groups = match.groupdict()
-        return cls(groups["group"], groups.get("tutorial"))
+    def from_path(cls, path: Path) -> Self:
+        name, identifier, *rest, file_name = path.stem.split("_")
+        return cls(
+            name=name,
+            identifier=identifier,
+            file_type="_".join(rest),
+            file_name=file_name,
+            suffix=path.suffix,
+        )
 
-    def get_id(self, all_infos: Iterable[Self]) -> str:
-        out = f"gruppe {self.group}"
-        if self.tutorial is not None and any(i != self and i.group == self.group for i in all_infos):
-            out += f" tut {self.tutorial}"
+    @property
+    def feedback_path(self) -> Path:
+        return Path(f"{self.name}_{self.identifier}_{self.file_type}_{self.file_name}_Feedback.pdf")
+
+    @cached_property
+    def group_num(self) -> str | None:
+        group_match = self.group_pattern.search(self.name)
+        return group_match.group(1) if group_match else None
+
+    @cached_property
+    def tut_num(self) -> str | None:
+        tut_match = self.tut_pattern.search(self.name)
+        return tut_match.group(1) if tut_match else None
+
+    def short_id(self, others: Iterable[Self]) -> str:
+        if not self.group_num:
+            return self.identifier
+        out = f"gruppe {self.group_num}"
+        if self.tut_num and any(o.group_num == self.group_num and o.tut_num != self.tut_num for o in others):
+            out += f" tut {self.tut_num}"
         return out
 
 
@@ -137,31 +166,13 @@ def unpack(
             raise Abort
         rmtree(output)
         output.mkdir(exist_ok=True)
-    regex = re.compile(config.id_pattern)
 
     with ZipFile(student_file) as file:
         file.extractall(output)
 
-    infos: dict[str, MatchInfo] = {}
-    for path in output.iterdir():
-        while not (match := regex.search(path.name)):
-            new_pattern = Prompt.ask(
-                f"[attention]Could not find a student identifier in '{path.name}'[/], do you want to update the "
-                "identifier pattern?\nIt must be a regex string with either a single capture group uniquely identifying "
-                "the submission or two named groups 'group' and (optionally) 'tutorial'.",
-                default=config.id_pattern,
-                console=console,
-            )
-            config.id_pattern = new_pattern
-            config.save()
-            regex = re.compile(new_pattern)
-        infos[path.name] = MatchInfo.from_match(match)
-
-    student_data = dict[str, StudentInfo]()
-    for path in track(list(output.iterdir()), description="Formatting student files"):
-        identifier = infos[path.name].get_id(infos.values())
-        student_data[identifier] = StudentInfo(original_name=path.name, points=None)
-
+    all_file_data = {path: MoodleFileData.from_path(path) for path in output.iterdir()}
+    student_data = StudentData(identifier_column=config.default_identifier_column)
+    for path, file_data in track(all_file_data.items(), description="Formatting student files"):
         if path.suffix == ".zip":
             with ZipFile(path) as unzipped_path:
                 if len(unzipped_path.filelist) == 1:
@@ -172,22 +183,26 @@ def unpack(
                     path = path.with_suffix("")
                     unzipped_path.extractall(path)
 
-        new_path = path.with_name(identifier).with_suffix(path.suffix)
-        if path.is_file() and path.suffix == ".pdf":
-            add_grading_page(path, config.name, config.email, insert_image, new_path)
-            if new_path.name != path.name:
-                path.unlink()
-        elif path.is_dir():
-            path.rename(new_path)
+        short_id = file_data.short_id(all_file_data.values())
+        new_path = path.with_name(short_id).with_suffix(path.suffix)
+        path.rename(new_path)
+        if new_path.is_file() and path.suffix == ".pdf":
+            pdf_path = new_path
+        elif new_path.is_dir():
             for file in new_path.iterdir():
                 if file.is_file() and file.suffix == ".pdf":
-                    add_grading_page(file, config.name, config.email, insert_image)
-                    student_data[identifier].pdf_location = file.relative_to(path)
+                    pdf_path = new_path / file.name
                     break
+            else:
+                continue
+        else:
+            continue
+        student_data.data[file_data.identifier] = StudentInfo(
+            points=None, pdf_location=pdf_path.relative_to(output), feedback_location=file_data.feedback_path
+        )
+        add_grading_page(pdf_path, config.name, config.email, insert_image)
 
-    output.joinpath("student_data.json").write_bytes(
-        StudentData.dump_json(student_data, indent=2, exclude_defaults=True)
-    )
+    output.joinpath("student_data.json").write_text(student_data.model_dump_json(indent=2))
 
 
 @app.command()
@@ -196,11 +211,11 @@ def finalize(
         Path, Option(help="Path to the `student_data.json` file.", exists=True, dir_okay=False)
     ] = Path("assignments/data_file.json"),
     output: Annotated[
-        Path | None,
+        Optional[Path],  # noqa: UP007 # pyright: ignore[reportDeprecated]
         Option("--output", "-o", help="Path to the created feedback file zip.", exists=False),
     ] = None,
 ):
-    data = StudentData.validate_json(data_file.read_text())
+    data = StudentData.model_validate_json(data_file.read_text())
     output = output or data_file.with_name("feedback_files.zip")
     if output.exists():
         res = Confirm.ask(
@@ -212,9 +227,8 @@ def finalize(
             raise Abort
         rmtree(output)
     with ZipFile(output, "x") as feedback_zip:
-        for identifier, info in data.items():
-            path = info.pdf_location or data_file.with_name(identifier).with_suffix(".pdf")
-            pdf_points = get_points(path)
+        for identifier, info in data.data.items():
+            pdf_points = get_points(info.pdf_location)
             if info.points is not None and info.points != pdf_points:
                 info.points = float(
                     Prompt.ask(
@@ -226,11 +240,11 @@ def finalize(
                     )
                 )
                 if pdf_points != info.points:
-                    set_points(path, info.points)
+                    set_points(info.pdf_location, info.points)
             else:
                 info.points = pdf_points
-            feedback_zip.write(path, Path(info.original_name).with_suffix(".pdf"))
-    data_file.write_bytes(StudentData.dump_json(data, indent=2, exclude_defaults=True))
+            feedback_zip.write(info.pdf_location, info.feedback_location)
+    data_file.write_text(data.model_dump_json(indent=2))
 
 
 if __name__ == "__main__":
