@@ -209,7 +209,7 @@ def unpack(
 def finalize(
     data_file: Annotated[
         Path, Option(help="Path to the `student_data.json` file.", exists=True, dir_okay=False)
-    ] = Path("assignments/data_file.json"),
+    ] = Path("assignments/student_data.json"),
     output: Annotated[
         Optional[Path],  # noqa: UP007 # pyright: ignore[reportDeprecated]
         Option("--output", "-o", help="Path to the created feedback file zip.", exists=False),
@@ -228,7 +228,8 @@ def finalize(
         rmtree(output)
     with ZipFile(output, "x") as feedback_zip:
         for identifier, info in data.data.items():
-            pdf_points = get_points(info.pdf_location)
+            pdf_path = data_file.parent / info.pdf_location
+            pdf_points = get_points(pdf_path)
             if info.points is not None and info.points != pdf_points:
                 info.points = float(
                     Prompt.ask(
@@ -240,10 +241,10 @@ def finalize(
                     )
                 )
                 if pdf_points != info.points:
-                    set_points(info.pdf_location, info.points)
+                    set_points(pdf_path, info.points)
             else:
                 info.points = pdf_points
-            feedback_zip.write(info.pdf_location, info.feedback_location)
+            feedback_zip.write(pdf_path, info.feedback_location)
     data_file.write_text(data.model_dump_json(indent=2))
 
 
