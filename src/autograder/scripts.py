@@ -4,7 +4,7 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, ClassVar, Self
+from typing import Annotated, ClassVar, Optional, Self
 from zipfile import ZipFile
 
 from autograder.core import add_grading_page
@@ -113,6 +113,16 @@ def unpack(
         Path,
         Option("--out", "-o", help="the output folder", file_okay=False, writable=True),
     ] = Path() / "assignments",
+    insert_image: Annotated[
+        Optional[Path],  # noqa: UP007 # pyright: ignore[reportDeprecated]
+        Option(
+            "--insert-image",
+            "-i",
+            help="an image that will be included in the front page",
+            file_okay=True,
+            dir_okay=False,
+        ),
+    ] = None,
 ):
     config = AppConfig.get()
     if not output.exists():
@@ -166,14 +176,14 @@ def unpack(
 
         new_path = path.with_name(identifier).with_suffix(path.suffix)
         if path.is_file() and path.suffix == ".pdf":
-            add_grading_page(path, config.name, config.email, new_path)
+            add_grading_page(path, config.name, config.email, insert_image, new_path)
             if new_path.name != path.name:
                 path.unlink()
         elif path.is_dir():
             path.rename(new_path)
             for file in new_path.iterdir():
                 if file.is_file() and file.suffix == ".pdf":
-                    add_grading_page(file, config.name, config.email)
+                    add_grading_page(file, config.name, config.email, insert_image)
                     student_data[identifier].pdf_location = file.relative_to(path)
                     break
 

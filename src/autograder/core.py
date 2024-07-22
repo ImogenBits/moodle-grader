@@ -21,9 +21,9 @@ Bei Fragen könnt ihr gerne eine mail an <a color="blue" href="mailto:{email}">{
 style = ParagraphStyle("Normal", linkUnderline=True, fontSize=12, leading=15)
 
 
-def draw_grading_page(canvas: Canvas, name: str, email: str) -> None:
+def draw_grading_page(canvas: Canvas, name: str, email: str, image: Path | None) -> None:
     x, y = 2.5 * cm, 25 * cm
-    width, height = 20 * cm, 10 * cm
+    width, height = 16 * cm, 10 * cm
     canvas.translate(x, y)
 
     para = Paragraph(points_label, style)
@@ -43,15 +43,27 @@ def draw_grading_page(canvas: Canvas, name: str, email: str) -> None:
 
     para = Paragraph(text.format(name=name, email=email), style)
     _, height = para.wrap(width, height)
-    para.drawOn(canvas, 0, - 0.1 * cm - height)
+    canvas.translate(0, -0.1 * cm - height)
+    para.drawOn(canvas, 0, 0)
+
+    if image:
+        canvas.drawImage(
+            image,
+            x=-2 * cm,
+            y=-16 * cm,
+            width=width + 4 * cm,
+            height=15 * cm,
+            preserveAspectRatio=True,
+            anchor="n",
+        )
 
 
-def add_grading_page(student_file: Path, name: str, email: str, output: Path | None = None) -> None:
+def add_grading_page(student_file: Path, name: str, email: str, image: Path | None, output: Path | None = None) -> None:
     pdf_file = PdfWriter(clone_from=student_file)
 
     with BytesIO() as bytes_io:
         canvas = Canvas(bytes_io, pagesize=A4)
-        draw_grading_page(canvas, name, email)
+        draw_grading_page(canvas, name, email, image)
         canvas.save()
         bytes_io.seek(0)
         pdf_file.merge(0, fileobj=bytes_io)
