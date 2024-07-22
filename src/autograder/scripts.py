@@ -153,6 +153,17 @@ def unpack(
     for path in track(list(output.iterdir()), description="Formatting student files"):
         identifier = infos[path.name].get_id(infos.values())
         student_data[identifier] = StudentInfo(original_name=path.name, points=None)
+
+        if path.suffix == ".zip":
+            with ZipFile(path) as unzipped_path:
+                if len(unzipped_path.filelist) == 1:
+                    inner_file = unzipped_path.filelist[0]
+                    path = path.with_suffix(Path(inner_file.orig_filename).suffix)
+                    unzipped_path.extract(inner_file, path)
+                else:
+                    path = path.with_suffix("")
+                    unzipped_path.extractall(path)
+
         new_path = path.with_name(identifier).with_suffix(path.suffix)
         if path.is_file() and path.suffix == ".pdf":
             add_grading_page(path, config.name, config.email, new_path)
