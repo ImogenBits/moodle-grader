@@ -18,7 +18,7 @@ getLogger("pypdf").setLevel(50)
 points_label = "Gesamtpunkte:"
 text = """Korrigiert von {name}.<br/>
 Bei Fragen gerne eine mail an <a color="blue" href="mailto:{email}">{email}</a> schicken."""
-style = ParagraphStyle("Normal", linkUnderline=True, fontSize=12)
+style = ParagraphStyle("Normal", linkUnderline=True, fontSize=12, leading=15)
 
 
 def draw_grading_page(canvas: Canvas, name: str, email: str) -> None:
@@ -43,7 +43,7 @@ def draw_grading_page(canvas: Canvas, name: str, email: str) -> None:
 
     para = Paragraph(text.format(name=name, email=email), style)
     _, height = para.wrap(width, height)
-    para.drawOn(canvas, 0, - 1 * cm)
+    para.drawOn(canvas, 0, - 0.1 * cm - height)
 
 
 def add_grading_page(student_file: Path, name: str, email: str, output: Path | None = None) -> None:
