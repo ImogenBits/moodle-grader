@@ -210,7 +210,7 @@ def unpack(
                 continue
         else:
             continue
-        student_data.data[file_data.identifier] = StudentInfo(
+        student_data.data[file_data.name] = StudentInfo(
             points=None, pdf_location=pdf_path.relative_to(output), feedback_location=file_data.feedback_path
         )
         add_grading_page(pdf_path, config.name, config.email, insert_image)
