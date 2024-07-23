@@ -77,14 +77,27 @@ def config():
     launch(str(AppConfig.location))
 
 
-class StudentInfo(BaseModel):
+class BaseStudentInfo(BaseModel):
     points: float | None
+
+
+class StudentInfo(BaseStudentInfo):
     pdf_location: Path
     feedback_location: Path
 
 
-class StudentData(BaseModel):
+class _BaseData(BaseModel):
     identifier_column: str
+
+    def save(self, path: Path) -> None:
+        path.write_text(self.model_dump_json(indent=2))
+
+
+class BaseStudentData(_BaseData):
+    data: dict[str, BaseStudentInfo] = Field(default_factory=dict)
+
+
+class StudentData(_BaseData):
     data: dict[str, StudentInfo] = Field(default_factory=dict)
 
 
@@ -202,7 +215,7 @@ def unpack(
         )
         add_grading_page(pdf_path, config.name, config.email, insert_image)
 
-    output.joinpath("student_data.json").write_text(student_data.model_dump_json(indent=2))
+    student_data.save(output / "student_data.json")
 
 
 @app.command()
@@ -246,6 +259,38 @@ def finalize(
                 info.points = pdf_points
             feedback_zip.write(pdf_path, info.feedback_location)
     data_file.write_text(data.model_dump_json(indent=2))
+
+
+@app.command(help="Interactively create a grading file to use with the moodle plugin.")
+def interactive(
+    output: Annotated[
+        Path,
+        Option(
+            "--output",
+            "-o",
+            help="Path to the created feedback file zip.",
+            exists=False,
+        ),
+    ] = Path("grading_data.json"),
+):
+    config = AppConfig.get()
+    column = Prompt.ask("What type of identifier do you want to use?", default=config.default_identifier_column)
+    data = BaseStudentData(identifier_column=column)
+
+    while True:
+        identifier = Prompt.ask("Enter an identifier (or an empty string to finish grading)")
+        if not identifier:
+            break
+        while True:
+            points = Prompt.ask("Enter the number of points the student achieved")
+            try:
+                points = float(points) if points else None
+            except ValueError:
+                console.print("[error]The entered value is not a valid number of points.")
+            else:
+                break
+        data.data[identifier] = BaseStudentInfo(points=points)
+    data.save(output)
 
 
 if __name__ == "__main__":
