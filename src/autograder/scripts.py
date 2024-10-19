@@ -313,6 +313,7 @@ def interactive(
             else:
                 break
         data.data[identifier] = BaseStudentInfo(points=points)
+    console.print(f"[success]Finished grading process.[/] Writing data to '{output}'.")
     data.save(output)
 
 
