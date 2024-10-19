@@ -9,7 +9,7 @@ from typing import Annotated, ClassVar, Optional, Self  # pyright: ignore[report
 from zipfile import ZipFile
 
 from autograder.core import add_grading_page, get_points, set_points
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, ValidationError
 from rich.console import Console
 from rich.progress import track
 from rich.prompt import Confirm, Prompt
@@ -274,8 +274,31 @@ def interactive(
     ] = Path("grading_data.json"),
 ):
     config = AppConfig.get()
-    column = Prompt.ask("What type of identifier do you want to use?", default=config.default_identifier_column)
-    data = BaseStudentData(identifier_column=column)
+    data = None
+    if output.is_file():
+        try:
+            data = BaseStudentData.model_validate_json(output.read_text())
+        except ValidationError as e:
+            delete = Confirm.ask(
+                f"[error]There already exists a file at '{output}' that doesn't contain grading info.[/]\n"
+                "Do you want to delete that file?",
+                default=True,
+            )
+            if delete:
+                output.unlink()
+            else:
+                raise Abort from e
+        keep = Prompt.ask(
+            f"[info]There already exists grading data at '{output}'.[/]\n"
+            "Do you want to keep that data or delete it and start fresh?",
+            choices=["keep", "delete"],
+            default="keep",
+        )
+        if keep == "delete":
+            data = None
+    if data is None:
+        column = Prompt.ask("What type of identifier do you want to use?", default=config.default_identifier_column)
+        data = BaseStudentData(identifier_column=column)
 
     while True:
         identifier = Prompt.ask("Enter an identifier (or an empty string to finish grading)")
