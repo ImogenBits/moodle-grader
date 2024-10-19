@@ -105,5 +105,3 @@ reportUnnecessaryTypeIgnoreComment = "information"
 reportUninitializedInstanceVariable = "warning"
 reportFunctionMemberAccess = "warning"
 reportOverlappingOverload = "warning"
-
-[tool.pdm]
