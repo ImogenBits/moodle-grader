@@ -8,13 +8,14 @@ from pathlib import Path
 from typing import Annotated, ClassVar, Optional, Self  # pyright: ignore[reportDeprecated]
 from zipfile import ZipFile
 
-from autograder.core import add_grading_page, get_points, set_points
 from pydantic import BaseModel, EmailStr, Field, ValidationError
 from rich.console import Console
 from rich.progress import track
 from rich.prompt import Confirm, Prompt
 from rich.theme import Theme
 from typer import Abort, Argument, Option, Typer, get_app_dir, launch
+
+from autograder.core import add_grading_page, get_points, set_points
 
 APP_NAME = "moodle_pdf_autograder"
 theme = Theme({
