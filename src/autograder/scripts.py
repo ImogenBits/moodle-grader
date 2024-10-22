@@ -190,11 +190,13 @@ def unpack(
             with ZipFile(path) as unzipped_path:
                 if len(unzipped_path.filelist) == 1:
                     inner_file = unzipped_path.filelist[0]
-                    path = path.with_suffix(Path(inner_file.orig_filename).suffix)
-                    unzipped_path.extract(inner_file, path)
+                    new_path = path.with_suffix(Path(inner_file.orig_filename).suffix)
+                    unzipped_path.extract(inner_file, new_path)
                 else:
-                    path = path.with_suffix("")
-                    unzipped_path.extractall(path)
+                    new_path = path.with_suffix("")
+                    unzipped_path.extractall(new_path)
+            path.unlink()
+            path = new_path
 
         short_id = file_data.short_id(all_file_data.values())
         new_path = path.with_name(short_id).with_suffix(path.suffix)
