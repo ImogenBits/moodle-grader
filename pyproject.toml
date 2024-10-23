@@ -56,7 +56,7 @@ select = [
     "FURB",
     "RUF",
 ]
-ignore = ["TRY003", "PIE790", "FBT001", "B027"]
+ignore = ["TRY003", "PIE790", "FBT001", "B027", "TCH003"]
 
 [tool.ruff.lint.isort]
 split-on-trailing-comma = false

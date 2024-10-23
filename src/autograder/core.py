@@ -74,7 +74,15 @@ def add_grading_page(student_file: Path, name: str, email: str, image: Path | No
 def get_points(student_file: Path) -> float | None:
     file = PdfReader(student_file)
     data = file.get_form_text_fields().get("moodleGradeField")
-    return float(data) if data else None
+    if not data:
+        return None
+    try:
+        return float(data)
+    except ValueError:
+        try:
+            return float(data.replace(",", "."))
+        except ValueError:
+            return None
 
 
 def set_points(student_file: Path, points: float) -> None:

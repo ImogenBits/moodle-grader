@@ -1,11 +1,13 @@
 """Autograder scripts."""
 
+from __future__ import annotations
+
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
-from typing import Annotated, ClassVar, Optional, Self  # pyright: ignore[reportDeprecated]
+from typing import Annotated, ClassVar, NewType, Optional, Self  # pyright: ignore[reportDeprecated]
 from zipfile import ZipFile
 
 from pydantic import BaseModel, EmailStr, Field, ValidationError
@@ -78,35 +80,32 @@ def config():
     launch(str(AppConfig.location))
 
 
-class BaseStudentInfo(BaseModel):
-    points: float | None
+Group = NewType("Group", int)
+Tut = NewType("Tut", int)
 
 
-class StudentInfo(BaseStudentInfo):
+class GroupInfo(BaseModel):
+    tutorial: Tut | None = None
+    group: Group | None = None
+    points: float | None = None
     pdf_location: Path
     feedback_location: Path
 
 
-class _BaseData(BaseModel):
+class StudentData(BaseModel):
     identifier_column: str
+    data: dict[str, GroupInfo] = Field(default_factory=dict)
 
     def save(self, path: Path) -> None:
-        path.write_text(self.model_dump_json(indent=2))
+        path.write_text(self.model_dump_json(indent=2, exclude_defaults=True))
 
 
-class BaseStudentData(_BaseData):
-    data: dict[str, BaseStudentInfo] = Field(default_factory=dict)
-
-
-class StudentData(_BaseData):
-    data: dict[str, StudentInfo] = Field(default_factory=dict)
-
-
-@dataclass(frozen=True)
+@dataclass
 class MoodleFileData:
     name: str
     identifier: str
-    file_type: str
+    moodle_type: str
+    moodle_file: str
     file_name: str
     suffix: str
 
@@ -115,41 +114,55 @@ class MoodleFileData:
 
     @classmethod
     def from_path(cls, path: Path) -> Self:
-        name, identifier, *rest, file_name = path.stem.split("_")
+        name, identifier, moodle_type, moodle_file, *file_name = path.stem.split("_")
         return cls(
             name=name,
             identifier=identifier,
-            file_type="_".join(rest),
-            file_name=file_name,
+            moodle_type=moodle_type,
+            moodle_file=moodle_file,
+            file_name="_".join(file_name),
             suffix=path.suffix,
         )
 
     @property
     def feedback_path(self) -> Path:
-        return Path(f"{self.name}_{self.identifier}_{self.file_type}_{self.file_name}_Feedback.pdf")
+        return Path(
+            f"{self.name}_{self.identifier}_{self.moodle_type}_{self.moodle_file}_{self.file_name}_Feedback.pdf"
+        )
 
     @cached_property
-    def group_num(self) -> str | None:
+    def group(self) -> Group | None:
         group_match = self.group_pattern.search(self.name)
-        return group_match.group(1) if group_match else None
+        return Group(int(group_match.group(1))) if group_match else None
 
     @cached_property
-    def tut_num(self) -> str | None:
+    def tutorial(self) -> Tut | None:
         tut_match = self.tut_pattern.search(self.name)
-        return tut_match.group(1) if tut_match else None
+        return Tut(int(tut_match.group(1))) if tut_match else None
 
-    def short_id(self, others: Iterable[Self]) -> str:
-        if not self.group_num:
+    def short_id(self, every_group: Iterable[Self | GroupInfo]) -> str:
+        if not self.group:
             return self.identifier
-        out = f"gruppe {self.group_num}"
-        if self.tut_num and any(o.group_num == self.group_num and o.tut_num != self.tut_num for o in others):
-            out += f" tut {self.tut_num}"
+        out = f"gruppe {self.group}"
+        if self.tutorial and any(o.group == self.group and o.tutorial != self.tutorial for o in every_group):
+            out += f" tut {self.tutorial}"
         return out
+
+
+def find_pdf(path: Path) -> Path | None:
+    if path.is_file() and path.suffix == ".pdf":
+        return path
+    elif path.is_dir() and not path.name.startswith(".") and path.name != "__MACOSX":
+        for child in path.iterdir():
+            if found := find_pdf(child):
+                return found
 
 
 @app.command(help="Unpacks a zip file containing the student's submissions.")
 def unpack(
-    student_file: Annotated[Path, Argument(help="the file containing the student's submissions")],
+    student_file: Annotated[
+        Path, Argument(help="the file containing the student's submissions", exists=True, dir_okay=False)
+    ],
     output: Annotated[
         Path,
         Option("--out", "-o", help="the output folder", file_okay=False, writable=True),
@@ -160,6 +173,7 @@ def unpack(
             "--insert-image",
             "-i",
             help="an image that will be included in the front page",
+            exists=True,
             file_okay=True,
             dir_okay=False,
         ),
@@ -183,9 +197,10 @@ def unpack(
 
     with ZipFile(student_file) as file:
         file.extractall(output)
+    student_file.unlink()
 
     all_file_data = {path: MoodleFileData.from_path(path) for path in output.iterdir()}
-    student_data = StudentData(identifier_column=config.default_identifier_column)
+    assignment_data = StudentData(identifier_column=config.default_identifier_column)
     for path, file_data in track(all_file_data.items(), description="Formatting student files"):
         if path.suffix == ".zip":
             with ZipFile(path) as unzipped_path:
@@ -202,30 +217,79 @@ def unpack(
         short_id = file_data.short_id(all_file_data.values())
         new_path = path.with_name(short_id).with_suffix(path.suffix)
         path.rename(new_path)
-        if new_path.is_file() and path.suffix == ".pdf":
-            pdf_path = new_path
-        elif new_path.is_dir():
-            for file in new_path.iterdir():
-                if file.is_file() and file.suffix == ".pdf":
-                    pdf_path = new_path / file.name
-                    break
-            else:
-                continue
-        else:
+
+        pdf_path = find_pdf(new_path)
+        if not pdf_path:
             continue
-        student_data.data[file_data.name] = StudentInfo(
-            points=None, pdf_location=pdf_path.relative_to(output), feedback_location=file_data.feedback_path
+        if pdf_path != new_path:
+            pdf_path.rename(pdf_path := new_path.with_suffix(".pdf"))
+
+        assignment_data.data[file_data.name] = GroupInfo(
+            tutorial=file_data.tutorial,
+            group=file_data.group,
+            points=None,
+            pdf_location=pdf_path.relative_to(output),
+            feedback_location=file_data.feedback_path,
         )
         add_grading_page(pdf_path, config.name, config.email, insert_image)
 
-    student_data.save(output / "student_data.json")
+    assignment_data.save(output / "assignment_data.json")
+
+
+@app.command(name="add", help="Add an individual submission to an existing assignment folder.")
+def add_pdf(
+    file: Annotated[
+        Path, Argument(help="the PDF file containing the student's submission", exists=True, dir_okay=False)
+    ],
+    data_file: Annotated[
+        Path,
+        Option(
+            "--assignment",
+            "-a",
+            help="the data file for an existing assignment",
+            exists=True,
+            dir_okay=False,
+            writable=True,
+        ),
+    ] = Path() / "assignments" / "assignment_data.json",
+    insert_image: Annotated[
+        Optional[Path],  # noqa: UP007 # pyright: ignore[reportDeprecated]
+        Option(
+            "--insert-image",
+            "-i",
+            help="an image that will be included in the front page",
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+        ),
+    ] = None,
+):
+    if file.suffix != ".pdf":
+        raise Abort("[error]The added input file is not a PDF.")
+    config = AppConfig.get()
+    assignment_data = StudentData.model_validate_json(data_file.read_text())
+    file_data = MoodleFileData.from_path(file)
+
+    short_id = file_data.short_id([file_data, *assignment_data.data.values()])
+    new_path = data_file.parent.joinpath(short_id).with_suffix(".pdf")
+    file.rename(new_path)
+
+    add_grading_page(new_path, config.name, config.email, insert_image)
+    assignment_data.data[file_data.name] = GroupInfo(
+            tutorial=file_data.tutorial,
+            group=file_data.group,
+            points=None,
+            pdf_location=new_path.relative_to(data_file.parent),
+            feedback_location=file_data.feedback_path,
+        )
+    assignment_data.save(data_file)
 
 
 @app.command()
 def finalize(
     data_file: Annotated[
         Path, Option(help="Path to the `student_data.json` file.", exists=True, dir_okay=False)
-    ] = Path("assignments/student_data.json"),
+    ] = Path() / "assignments" / "assignment_data.json",
     output: Annotated[
         Optional[Path],  # noqa: UP007 # pyright: ignore[reportDeprecated]
         Option("--output", "-o", help="Path to the created feedback file zip.", exists=False),
@@ -264,6 +328,18 @@ def finalize(
     data_file.write_text(data.model_dump_json(indent=2))
 
 
+class PointsInfo(BaseModel):
+    points: float | None = None
+
+
+class InteractiveData(BaseModel):
+    identifier_column: str
+    data: dict[str, PointsInfo] = Field(default_factory=dict)
+
+    def save(self, path: Path) -> None:
+        path.write_text(self.model_dump_json(indent=2, exclude_defaults=True))
+
+
 @app.command(help="Interactively create a grading file to use with the moodle plugin.")
 def interactive(
     output: Annotated[
@@ -280,7 +356,7 @@ def interactive(
     data = None
     if output.is_file():
         try:
-            data = BaseStudentData.model_validate_json(output.read_text())
+            data = InteractiveData.model_validate_json(output.read_text())
         except ValidationError as e:
             delete = Confirm.ask(
                 f"[error]There already exists a file at '{output}' that doesn't contain grading info.[/]\n"
@@ -301,7 +377,7 @@ def interactive(
             data = None
     if data is None:
         column = Prompt.ask("What type of identifier do you want to use?", default=config.default_identifier_column)
-        data = BaseStudentData(identifier_column=column)
+        data = InteractiveData(identifier_column=column)
 
     while True:
         identifier = Prompt.ask("Enter an identifier (or an empty string to finish grading)")
@@ -315,7 +391,7 @@ def interactive(
                 console.print("[error]The entered value is not a valid number of points.")
             else:
                 break
-        data.data[identifier] = BaseStudentInfo(points=points)
+        data.data[identifier] = PointsInfo(points=points)
     console.print(f"[success]Finished grading process.[/] Writing data to '{output}'.")
     data.save(output)
 
