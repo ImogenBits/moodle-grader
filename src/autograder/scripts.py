@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
+from contextlib import suppress
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
@@ -276,12 +277,12 @@ def add_pdf(
 
     add_grading_page(new_path, config.name, config.email, insert_image)
     assignment_data.data[file_data.name] = GroupInfo(
-            tutorial=file_data.tutorial,
-            group=file_data.group,
-            points=None,
-            pdf_location=new_path.relative_to(data_file.parent),
-            feedback_location=file_data.feedback_path,
-        )
+        tutorial=file_data.tutorial,
+        group=file_data.group,
+        points=None,
+        pdf_location=new_path.relative_to(data_file.parent),
+        feedback_location=file_data.feedback_path,
+    )
     assignment_data.save(data_file)
 
 
@@ -379,19 +380,20 @@ def interactive(
         column = Prompt.ask("What type of identifier do you want to use?", default=config.default_identifier_column)
         data = InteractiveData(identifier_column=column)
 
-    while True:
-        identifier = Prompt.ask("Enter an identifier (or an empty string to finish grading)")
-        if not identifier:
-            break
+    with suppress(SystemExit):
         while True:
-            points = Prompt.ask("Enter the number of points the student achieved")
-            try:
-                points = float(points) if points else None
-            except ValueError:
-                console.print("[error]The entered value is not a valid number of points.")
-            else:
+            identifier = Prompt.ask("Enter an identifier (or an empty string to finish grading)")
+            if not identifier:
                 break
-        data.data[identifier] = PointsInfo(points=points)
+            while True:
+                points = Prompt.ask("Enter the number of points the student achieved")
+                try:
+                    points = float(points) if points else None
+                except ValueError:
+                    console.print("[error]The entered value is not a valid number of points.")
+                else:
+                    break
+            data.data[identifier] = PointsInfo(points=points)
     console.print(f"[success]Finished grading process.[/] Writing data to '{output}'.")
     data.save(output)
 
