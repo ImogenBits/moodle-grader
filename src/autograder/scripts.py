@@ -98,7 +98,7 @@ class StudentData(BaseModel):
     data: dict[str, GroupInfo] = Field(default_factory=dict)
 
     def save(self, path: Path) -> None:
-        path.write_text(self.model_dump_json(indent=2, exclude_defaults=True))
+        path.write_text(self.model_dump_json(indent=2, exclude_defaults=True), encoding="utf-8")
 
 
 @dataclass
