@@ -8,6 +8,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
+from random import choice
 from typing import Annotated, ClassVar, NewType, Optional, Self  # pyright: ignore[reportDeprecated]
 from zipfile import ZipFile
 
@@ -159,6 +160,16 @@ def find_pdf(path: Path) -> Path | None:
                 return found
 
 
+_image_cache: dict[Path, list[Path]] = {}
+
+def select_image(path: Path | None) -> Path | None:
+    if path is None or path.is_file():
+        return path
+    if path not in _image_cache:
+        _image_cache[path] = list(path.iterdir())
+    return choice(_image_cache[path])
+
+
 @app.command(help="Unpacks a zip file containing the student's submissions.")
 def unpack(
     student_file: Annotated[
@@ -173,10 +184,9 @@ def unpack(
         Option(
             "--insert-image",
             "-i",
-            help="an image that will be included in the front page",
+            help="an image that will be included in the front page, "
+            "or path to a folder from which a random image will be selected.",
             exists=True,
-            file_okay=True,
-            dir_okay=False,
         ),
     ] = None,
 ):
@@ -232,7 +242,7 @@ def unpack(
             pdf_location=pdf_path.relative_to(output),
             feedback_location=file_data.feedback_path,
         )
-        add_grading_page(pdf_path, config.name, config.email, insert_image)
+        add_grading_page(pdf_path, config.name, config.email, select_image(insert_image))
 
     assignment_data.save(output / "assignment_data.json")
 
