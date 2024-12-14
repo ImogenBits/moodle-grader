@@ -271,7 +271,7 @@ def add_pdf(
             help="an image that will be included in the front page",
             exists=True,
             file_okay=True,
-            dir_okay=False,
+            dir_okay=True,
         ),
     ] = None,
 ):
@@ -285,7 +285,7 @@ def add_pdf(
     new_path = data_file.parent.joinpath(short_id).with_suffix(".pdf")
     file.rename(new_path)
 
-    add_grading_page(new_path, config.name, config.email, insert_image)
+    add_grading_page(new_path, config.name, config.email, select_image(insert_image))
     assignment_data.data[file_data.name] = GroupInfo(
         tutorial=file_data.tutorial,
         group=file_data.group,
