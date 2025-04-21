@@ -19,7 +19,7 @@ from rich.prompt import Confirm, Prompt
 from rich.theme import Theme
 from typer import Abort, Argument, Option, Typer, get_app_dir, launch
 
-from autograder.core import add_grading_page, get_points, set_points
+from autograder.core import add_grading_page, get_points, modify_pdf
 
 APP_NAME = "moodle_pdf_autograder"
 theme = Theme({
@@ -38,6 +38,7 @@ class AppConfig(BaseModel):
     name: str
     email: EmailStr
     default_identifier_column: str = "Group"
+    max_points: float = 20
 
     location: ClassVar[Path] = Path(get_app_dir(APP_NAME)) / "config.json"
 
@@ -305,6 +306,16 @@ def finalize(
         Optional[Path],  # noqa: UP007 # pyright: ignore[reportDeprecated]
         Option("--output", "-o", help="Path to the created feedback file zip.", exists=False),
     ] = None,
+    image_path: Annotated[
+        Optional[Path],  # noqa: UP007 # pyright: ignore[reportDeprecated]
+        Option(
+            "--bonus-image",
+            "-i",
+            help="an image that will be included in the front page if at least half of the maximum number of points "
+            "were scored, or path to a folder from which a random image will be selected.",
+            exists=True,
+        ),
+    ] = None,
 ):
     data = StudentData.model_validate_json(data_file.read_text())
     output = output or data_file.with_name("feedback_files.zip")
@@ -322,19 +333,26 @@ def finalize(
             pdf_path = data_file.parent / info.pdf_location
             pdf_points = get_points(pdf_path)
             if info.points is not None and info.points != pdf_points:
-                info.points = float(
+                new_points = float(
                     Prompt.ask(
-                        f"[attention]Group '{identifier}' has {info.points} points in the data file, but {pdf_points} in the pdf.[/] "
-                        "Which value do you want to use?",
+                        f"[attention]Group '{identifier}' has {info.points} points in the data file, but {pdf_points} "
+                        "in the pdf.[/] Which value do you want to use?",
                         choices=[str(info.points), str(pdf_points)],
                         default=str(pdf_points),
                         console=console,
                     )
                 )
-                if pdf_points != info.points:
-                    set_points(pdf_path, info.points)
+                old_points = info.points if new_points == pdf_points else pdf_points or -1
             else:
-                info.points = pdf_points
+                new_points, old_points = pdf_points or -1, info.points or -1
+            info.points = new_points
+            
+            if old_points <= (AppConfig.get().max_points / 2) <= new_points:
+                bonus_image = select_image(image_path)
+            else:
+                bonus_image = None
+            write_points = new_points if new_points != pdf_points else None
+            modify_pdf(pdf_path, write_points, bonus_image)
             feedback_zip.write(pdf_path, info.feedback_location)
     data_file.write_text(data.model_dump_json(indent=2))
 

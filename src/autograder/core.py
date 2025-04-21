@@ -85,7 +85,27 @@ def get_points(student_file: Path) -> float | None:
             return None
 
 
-def set_points(student_file: Path, points: float) -> None:
-    file = PdfWriter(clone_from=student_file)
-    file.update_page_form_field_values(file.pages[0], {"moodleGradeField": str(points)}, auto_regenerate=False)
-    file.write(student_file)
+def modify_pdf(student_file: Path, points: float | None = None, bonus_image: Path | None = None) -> None:
+    if not points and not bonus_image:
+        return
+    pdf = PdfWriter(clone_from=student_file)
+    if points:
+        pdf.update_page_form_field_values(pdf.pages[0], {"moodleGradeField": str(points)}, auto_regenerate=False)
+    if bonus_image:
+        page = pdf.get_page(0)
+        with BytesIO() as bytes_io:
+            canvas = Canvas(bytes_io, pagesize=A4)
+            canvas.drawImage(
+                bonus_image,
+                x=0.5 * cm,
+                y=0.5 * cm,
+                width=20 * cm,
+                height=11.25 * cm,
+                preserveAspectRatio=True,
+                anchor="n",
+            )
+            canvas.save()
+            bytes_io.seek(0)
+            new_reader = PdfReader(bytes_io)
+            page.merge_page(new_reader.get_page(0))
+    pdf.write(student_file)
