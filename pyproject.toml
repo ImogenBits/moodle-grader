@@ -48,7 +48,6 @@ select = [
     "PYI",
     "SLOT",
     "SIM",
-    "TCH",
     "PTH",
     "TRY",
     "FLY",
@@ -56,7 +55,7 @@ select = [
     "FURB",
     "RUF",
 ]
-ignore = ["TRY003", "PIE790", "FBT001", "B027", "TCH003"]
+ignore = ["TRY003", "PIE790", "FBT001", "B027", "FBT003", "RUF001"]
 
 [tool.ruff.lint.isort]
 split-on-trailing-comma = false
@@ -97,6 +96,7 @@ reportUntypedFunctionDecorator = "warning"
 reportUntypedClassDecorator = "warning"
 reportUntypedBaseClass = "warning"
 reportUntypedNamedTuple = "warning"
+reportCallInDefaultInitializer = "none"
 reportImportCycles = "warning"
 reportPropertyTypeMismatch = "error"
 reportShadowedImports = "warning"
