@@ -163,6 +163,7 @@ def find_pdf(path: Path) -> Path | None:
 
 _image_cache: dict[Path, list[Path]] = {}
 
+
 def select_image(path: Path | None) -> Path | None:
     if path is None or path.is_file():
         return path
@@ -243,7 +244,7 @@ def unpack(
             pdf_location=pdf_path.relative_to(output),
             feedback_location=file_data.feedback_path,
         )
-        add_grading_page(pdf_path, config.name, config.email, select_image(insert_image))
+        add_grading_page(pdf_path, config.name, config.email, short_id, output.absolute().parent.name, select_image(insert_image))
 
     assignment_data.save(output / "assignment_data.json")
 
@@ -286,7 +287,9 @@ def add_pdf(
     new_path = data_file.parent.joinpath(short_id).with_suffix(".pdf")
     file.rename(new_path)
 
-    add_grading_page(new_path, config.name, config.email, select_image(insert_image))
+    add_grading_page(
+        new_path, config.name, config.email, short_id, data_file.parent.parent.name, select_image(insert_image)
+    )
     assignment_data.data[file_data.name] = GroupInfo(
         tutorial=file_data.tutorial,
         group=file_data.group,
@@ -346,7 +349,7 @@ def finalize(
             else:
                 new_points, old_points = pdf_points or -1, info.points or -1
             info.points = new_points
-            
+
             if old_points <= (AppConfig.get().max_points / 2) <= new_points:
                 bonus_image = select_image(image_path)
             else:
