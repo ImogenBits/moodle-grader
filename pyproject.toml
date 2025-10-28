@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "moodle-pdf-grader"
 version = "0.0.1"
-requires-python = ">=3.12"
+requires-python = ">=3.13"
 authors = [{ name = "Imogen Hergeth" }]
 
 dependencies = [
