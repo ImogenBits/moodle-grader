@@ -43,7 +43,6 @@ def draw_grading_page(canvas: Canvas, name: str, email: str, group: str, week: s
     )
 
     para = Paragraph(text.format(name=name, email=email, group=group.title(), week=week), style)
-    print(para)
     _, height = para.wrap(width, height)
     canvas.translate(0, -0.1 * cm - height)
     para.drawOn(canvas, 0, 0)
