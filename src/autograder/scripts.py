@@ -174,8 +174,8 @@ def select_image(path: Path | None) -> Path | None:
 
 @app.command(help="Unpacks a zip file containing the student's submissions.")
 def unpack(
-    student_file: Annotated[
-        Path, Argument(help="the file containing the student's submissions", exists=True, dir_okay=False)
+    student_files: Annotated[
+        list[Path], Argument(help="the file containing the student's submissions", exists=True, dir_okay=False)
     ],
     output: Annotated[
         Path,
@@ -208,9 +208,10 @@ def unpack(
         rmtree(output)
         output.mkdir(exist_ok=True)
 
-    with ZipFile(student_file) as file:
-        file.extractall(output)
-    student_file.unlink()
+    for student_file in student_files:
+        with ZipFile(student_file) as file:
+            file.extractall(output)
+        student_file.unlink()
 
     all_file_data = {path: MoodleFileData.from_path(path) for path in output.iterdir()}
     assignment_data = StudentData(identifier_column=config.default_identifier_column)
