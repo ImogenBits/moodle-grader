@@ -1,27 +1,26 @@
 """Autograder scripts."""
 
-from __future__ import annotations
-
-import re
 from collections.abc import Iterable
-from contextlib import suppress
-from dataclasses import dataclass
-from functools import cached_property
 from pathlib import Path
 from random import choice
-from typing import Annotated, ClassVar, NewType, Optional, Self  # pyright: ignore[reportDeprecated]
+from typing import Annotated, ClassVar, Self
+from urllib.parse import parse_qs, urlparse, urlunsplit
+from urllib.request import urlretrieve
 from zipfile import ZipFile
 
-from pydantic import BaseModel, EmailStr, Field, ValidationError
+import tomlkit
+from pydantic import BaseModel, EmailStr
 from rich.console import Console
-from rich.progress import track
+from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn, TimeRemainingColumn
 from rich.prompt import Confirm, Prompt
 from rich.theme import Theme
 from typer import Abort, Argument, Option, Typer, get_app_dir, launch
 
 from autograder.core import add_grading_page, get_points, modify_pdf
+from autograder.moodle import get_submission_files
 
 APP_NAME = "moodle_pdf_autograder"
+COURSE_CONFIG_NAME = "moodle_grader.toml"
 theme = Theme({
     "success": "green",
     "warning": "orange3",
@@ -34,11 +33,27 @@ console = Console(theme=theme)
 app = Typer(pretty_exceptions_show_locals=True)
 
 
+def track[T](sequence: Iterable[T], description: str, *, transient: bool = False) -> Iterable[T]:
+    progress = Progress(
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        TimeRemainingColumn(elapsed_when_finished=True),
+        console=console,
+        transient=transient,
+    )
+
+    with progress:
+        yield from progress.track(
+            sequence,
+            description=description,
+        )
+
+
 class AppConfig(BaseModel):
     name: str
     email: EmailStr
-    default_identifier_column: str = "Group"
-    max_points: float = 20
+    moodle_token: str
 
     location: ClassVar[Path] = Path(get_app_dir(APP_NAME)) / "config.json"
 
@@ -47,19 +62,36 @@ class AppConfig(BaseModel):
         path = cls.location
         if path.is_file():
             return cls.model_validate_json(path.read_text())
-        name = Prompt.ask("What name do you want to use?", console=console)
-        email = Prompt.ask(
-            "What email address do you want to use?",
-            default=f"{".".join(name.lower().split())}@rwth-aachen.de",
-            console=console,
-        )
-        config = cls(name=name, email=email)
-        config.save()
-        return config
+        else:
+            raise Abort
 
     def save(self) -> None:
         self.location.parent.mkdir(parents=True, exist_ok=True)
         self.location.write_text(self.model_dump_json(indent=2))
+
+
+class CourseConfig(BaseModel):
+    moodle_url: str
+    course_id: str
+    tutorials: list[str]
+    max_points: float
+
+    @classmethod
+    def get(cls) -> Self:
+        path = Path().absolute()
+        while not path.joinpath(COURSE_CONFIG_NAME).exists():
+            parent = path.parent
+            if path == parent:
+                console.print(
+                    "[error]Could not find course config file in any parent folder.[/]\n"
+                    "Please run the 'init' command in the course folder you want to use."
+                )
+                raise Abort
+        data = tomlkit.loads(path.joinpath(COURSE_CONFIG_NAME).read_text())
+        return cls.model_validate(data)
+
+    def save(self, path: Path) -> None:
+        path.write_text(tomlkit.dumps(self.model_dump()))
 
 
 def rmtree(path: Path) -> None:
@@ -83,173 +115,6 @@ def config():
     launch(str(AppConfig.location))
 
 
-Group = NewType("Group", int)
-Tut = NewType("Tut", int)
-
-
-class GroupInfo(BaseModel):
-    tutorial: Tut | None = None
-    group: Group | None = None
-    points: float | None = None
-    pdf_location: Path
-    feedback_location: Path
-
-
-class StudentData(BaseModel):
-    identifier_column: str
-    data: dict[str, GroupInfo] = Field(default_factory=dict)
-
-    def save(self, path: Path) -> None:
-        path.write_text(self.model_dump_json(indent=2, exclude_defaults=True), encoding="utf-8")
-
-
-@dataclass
-class MoodleFileData:
-    name: str
-    identifier: str
-    moodle_type: str
-    moodle_file: str
-    file_name: str
-    suffix: str
-
-    group_pattern: ClassVar[re.Pattern[str]] = re.compile(r"[gG]ruppe (\d+)")
-    tut_pattern: ClassVar[re.Pattern[str]] = re.compile(r"[tT]ut(?:orium)? (\d+)")
-
-    @classmethod
-    def from_path(cls, path: Path) -> Self:
-        name, identifier, moodle_type, moodle_file, *file_name = path.stem.split("_")
-        return cls(
-            name=name,
-            identifier=identifier,
-            moodle_type=moodle_type,
-            moodle_file=moodle_file,
-            file_name="_".join(file_name),
-            suffix=path.suffix,
-        )
-
-    @property
-    def feedback_path(self) -> Path:
-        return Path(
-            f"{self.name}_{self.identifier}_{self.moodle_type}_{self.moodle_file}_{self.file_name}_Feedback.pdf"
-        )
-
-    @cached_property
-    def group(self) -> Group | None:
-        group_match = self.group_pattern.search(self.name)
-        return Group(int(group_match.group(1))) if group_match else None
-
-    @cached_property
-    def tutorial(self) -> Tut | None:
-        tut_match = self.tut_pattern.search(self.name)
-        return Tut(int(tut_match.group(1))) if tut_match else None
-
-    def short_id(self, every_group: Iterable[Self | GroupInfo]) -> str:
-        if not self.group:
-            return self.identifier
-        out = f"gruppe {self.group}"
-        if self.tutorial and any(o.group == self.group and o.tutorial != self.tutorial for o in every_group):
-            out += f" tut {self.tutorial}"
-        return out
-
-
-def find_pdf(path: Path) -> Path | None:
-    if path.is_file() and path.suffix == ".pdf":
-        return path
-    elif path.is_dir() and not path.name.startswith(".") and path.name != "__MACOSX":
-        for child in path.iterdir():
-            if found := find_pdf(child):
-                return found
-
-
-_image_cache: dict[Path, list[Path]] = {}
-
-
-def select_image(path: Path | None) -> Path | None:
-    if path is None or path.is_file():
-        return path
-    if path not in _image_cache:
-        _image_cache[path] = list(path.iterdir())
-    return choice(_image_cache[path])
-
-
-@app.command(help="Unpacks a zip file containing the student's submissions.")
-def unpack(
-    student_files: Annotated[
-        list[Path], Argument(help="the file containing the student's submissions", exists=True, dir_okay=False)
-    ],
-    output: Annotated[
-        Path,
-        Option("--out", "-o", help="the output folder", file_okay=False, writable=True),
-    ] = Path() / "assignments",
-    insert_image: Annotated[
-        Optional[Path],  # noqa: UP007 # pyright: ignore[reportDeprecated]
-        Option(
-            "--insert-image",
-            "-i",
-            help="an image that will be included in the front page, "
-            "or path to a folder from which a random image will be selected.",
-            exists=True,
-        ),
-    ] = None,
-):
-    config = AppConfig.get()
-    if not output.exists():
-        output.mkdir(parents=True)
-    elif output.is_file():
-        raise Abort("The chosen output folder already exists and is a file")
-    elif next(output.iterdir(), None):
-        res = Confirm.ask(
-            f"[attention]The chosen output folder ({output}) already exists![/]\nDo you want to replace it?",
-            default=False,
-            console=console,
-        )
-        if not res:
-            raise Abort
-        rmtree(output)
-        output.mkdir(exist_ok=True)
-
-    for student_file in student_files:
-        with ZipFile(student_file) as file:
-            file.extractall(output)
-        student_file.unlink()
-
-    all_file_data = {path: MoodleFileData.from_path(path) for path in output.iterdir()}
-    assignment_data = StudentData(identifier_column=config.default_identifier_column)
-    for path, file_data in track(all_file_data.items(), description="Formatting student files"):
-        if path.suffix == ".zip":
-            with ZipFile(path) as unzipped_path:
-                if len(unzipped_path.filelist) == 1:
-                    inner_file = unzipped_path.filelist[0]
-                    new_path = path.with_suffix(Path(inner_file.orig_filename).suffix)
-                    unzipped_path.extract(inner_file, new_path)
-                else:
-                    new_path = path.with_suffix("")
-                    unzipped_path.extractall(new_path)
-            path.unlink()
-            path = new_path
-
-        short_id = file_data.short_id(all_file_data.values())
-        new_path = path.with_name(short_id).with_suffix(path.suffix)
-        path.rename(new_path)
-
-        pdf_path = find_pdf(new_path)
-        if not pdf_path:
-            continue
-        if pdf_path != new_path:
-            pdf_path.rename(pdf_path := new_path.with_suffix(".pdf"))
-
-        assignment_data.data[file_data.name] = GroupInfo(
-            tutorial=file_data.tutorial,
-            group=file_data.group,
-            points=None,
-            pdf_location=pdf_path.relative_to(output),
-            feedback_location=file_data.feedback_path,
-        )
-        add_grading_page(pdf_path, config.name, config.email, short_id, output.absolute().parent.name, select_image(insert_image))
-
-    assignment_data.save(output / "assignment_data.json")
-
-
 @app.command(name="add", help="Add an individual submission to an existing assignment folder.")
 def add_pdf(
     file: Annotated[
@@ -267,7 +132,7 @@ def add_pdf(
         ),
     ] = Path() / "assignments" / "assignment_data.json",
     insert_image: Annotated[
-        Optional[Path],  # noqa: UP007 # pyright: ignore[reportDeprecated]
+        Path | None,
         Option(
             "--insert-image",
             "-i",
@@ -307,11 +172,11 @@ def finalize(
         Path, Option(help="Path to the `student_data.json` file.", exists=True, dir_okay=False)
     ] = Path() / "assignments" / "assignment_data.json",
     output: Annotated[
-        Optional[Path],  # noqa: UP007 # pyright: ignore[reportDeprecated]
+        Path | None,  # noqa: UP007 # pyright: ignore[reportDeprecated]
         Option("--output", "-o", help="Path to the created feedback file zip.", exists=False),
     ] = None,
     image_path: Annotated[
-        Optional[Path],  # noqa: UP007 # pyright: ignore[reportDeprecated]
+        Path | None,  # noqa: UP007 # pyright: ignore[reportDeprecated]
         Option(
             "--bonus-image",
             "-i",
@@ -365,69 +230,146 @@ class PointsInfo(BaseModel):
     points: float | None = None
 
 
-class InteractiveData(BaseModel):
-    identifier_column: str
-    data: dict[str, PointsInfo] = Field(default_factory=dict)
+@app.command()
+def init():
+    app_config = AppConfig.get()
+    if not app_config:
+        name = Prompt.ask("What name do you want to use?", console=console)
+        email = Prompt.ask(
+            "What email address do you want to use?",
+            default=f"{'.'.join(name.lower().split())}@rwth-aachen.de",
+            console=console,
+        )
+        moodle_token = Prompt.ask("Please enter a moodle API token.")
+        app_config = AppConfig(name=name, email=email, moodle_token=moodle_token)
+        app_config.save()
 
-    def save(self, path: Path) -> None:
-        path.write_text(self.model_dump_json(indent=2, exclude_defaults=True))
+    full_url = urlparse(Prompt.ask("Please enter the URL to moodle page of the course you want to work with"))
+    base_url = urlunsplit((full_url.scheme, full_url.netloc, "", "", ""))
+    queries = parse_qs(full_url.query)
+    if not full_url.path.startswith("/course") or "id" not in queries:
+        console.print("[error]The URL you entered does not point to a moodle course page.")
+        raise Abort
+    course_id = queries["id"][0]
+    max_points = float(Prompt.ask("How many points does each assignment award?").replace(",", "."))
+    tutorial_string = Prompt.ask(
+        "Which tutorials do you grade for?\nYou can enter any number of identifiers seperated by commas"
+    )
+    tutorials = [id.strip() for id in tutorial_string.split(",")]
+    course_config = CourseConfig(
+        moodle_url=base_url,
+        course_id=course_id,
+        tutorials=tutorials,
+        max_points=max_points,
+    )
+    course_config.save(Path(COURSE_CONFIG_NAME))
 
 
-@app.command(help="Interactively create a grading file to use with the moodle plugin.")
-def interactive(
+def _write_file(token: str, url: str, target: Path) -> None:
+    suffix = url.split(".")[-1]
+    urlretrieve(f"{url}?token={token}", target.with_suffix(f".{suffix}"))
+
+
+def find_pdf(path: Path) -> Path | None:
+    if path.is_file() and path.suffix == ".pdf":
+        return path
+    elif path.is_dir() and not path.name.startswith(".") and path.name != "__MACOSX":
+        for child in path.iterdir():
+            if found := find_pdf(child):
+                return found
+
+
+def select_image(path: Path | None) -> Iterable[Path | None]:
+    if path is None or path.is_file():
+        while True:
+            yield path
+    images = list(path.iterdir())
+    while True:
+        yield choice(images)
+
+
+@app.command()
+def download(
+    assignment_week: Annotated[
+        int,
+        Argument(help="the assignment number."),
+    ],
     output: Annotated[
-        Path,
+        Path | None,
         Option(
             "--output",
             "-o",
-            help="Path to the created feedback file zip.",
-            exists=False,
+            help="The folder where downloaded files are placed. Defaults to './{assignment}/assignments'",
         ),
-    ] = Path("grading_data.json"),
+    ] = None,
+    insert_image: Annotated[
+        Path | None,
+        Option(
+            "--insert-image",
+            "-i",
+            help="an image that will be included in the front page, "
+            "or path to a folder from which a random image will be selected.",
+            exists=True,
+        ),
+    ] = None,
 ):
-    config = AppConfig.get()
-    data = None
-    if output.is_file():
-        try:
-            data = InteractiveData.model_validate_json(output.read_text())
-        except ValidationError as e:
-            delete = Confirm.ask(
-                f"[error]There already exists a file at '{output}' that doesn't contain grading info.[/]\n"
-                "Do you want to delete that file?",
-                default=True,
-            )
-            if delete:
-                output.unlink()
-            else:
-                raise Abort from e
-        keep = Prompt.ask(
-            f"[info]There already exists grading data at '{output}'.[/]\n"
-            "Do you want to keep that data or delete it and start fresh?",
-            choices=["keep", "delete"],
-            default="keep",
+    assignment = f"{assignment_week:02}"
+    app = AppConfig.get()
+    course = CourseConfig.get()
+    if output is None:
+        output = Path(f"{assignment}/assignments")
+    if output.exists():
+        res = Confirm.ask(
+            f"[attention]The chosen output folder ({output}) already exists![/]\nDo you want to replace it?",
+            default=False,
+            console=console,
         )
-        if keep == "delete":
-            data = None
-    if data is None:
-        column = Prompt.ask("What type of identifier do you want to use?", default=config.default_identifier_column)
-        data = InteractiveData(identifier_column=column)
+        if not res:
+            raise Abort
+        rmtree(output)
+    output.mkdir(exist_ok=True, parents=True)
 
-    with suppress(SystemExit):
-        while True:
-            identifier = Prompt.ask("Enter an identifier (or an empty string to finish grading)")
-            if not identifier:
-                break
-            while True:
-                points = Prompt.ask("Enter the number of points the student achieved")
-                try:
-                    points = float(points) if points else None
-                except ValueError:
-                    console.print("[error]The entered value is not a valid number of points.")
+    with console.status("Getting assignment info"):
+        files = get_submission_files(app, course, assignment)
+    for name, urls in track(files.items(), "Downloading submissions..."):
+        if len(urls) == 1:
+            _write_file(app.moodle_token, urls[0], output.joinpath(name))
+        else:
+            group_folder = output.joinpath(name)
+            group_folder.mkdir()
+            for url in urls:
+                file_name = url.split("/")[-1]
+                _write_file(app.moodle_token, url, group_folder.joinpath(file_name))
+
+    for path, image in zip(
+        track(list(output.iterdir()), "Formatting submissions..."), select_image(insert_image), strict=False
+    ):
+        if path.suffix == ".zip":
+            with ZipFile(path) as unzipped_path:
+                if len(unzipped_path.filelist) == 1:
+                    inner_file = unzipped_path.filelist[0]
+                    new_path = path.with_suffix(Path(inner_file.orig_filename).suffix)
+                    unzipped_path.extract(inner_file, new_path)
                 else:
-                    break
-            data.data[identifier] = PointsInfo(points=points)
-    console.print(f"[success]Finished grading process.[/] Writing data to '{output}'.")
-    data.save(output)
+                    new_path = path.with_suffix("")
+                    unzipped_path.extractall(new_path)
+            path.unlink()
+            path = new_path
+
+        pdf_path = find_pdf(path)
+        if not pdf_path:
+            continue
+        if pdf_path != path:
+            pdf_path.rename(pdf_path := path.with_suffix(".pdf"))
+
+        add_grading_page(
+            pdf_path,
+            app.name,
+            app.email,
+            path.stem,
+            assignment,
+            image,
+        )
 
 
 if __name__ == "__main__":
