@@ -5,16 +5,18 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "moodle-pdf-grader"
 version = "0.0.1"
-requires-python = ">=3.13"
+requires-python = ">=3.14"
 authors = [{ name = "Imogen Hergeth" }]
 
 dependencies = [
-    "typer>=0.12.3",
-    "ruff>=0.5.4",
-    "pypdf>=4.3.0",
-    "reportlab>=4.2.2",
-    "pydantic>=2.8.2",
-    "email-validator>=2.2.0",
+    "typer>=0.20.0",
+    "ruff>=0.14.9",
+    "pypdf>=6.4.1",
+    "reportlab>=4.4.6",
+    "pydantic>=2.12.5",
+    "email-validator>=2.3.0",
+    "requests>=2.32.5",
+    "pillow>=12.0.0",
 ]
 
 [project.optional-dependencies]
