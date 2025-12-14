@@ -48,6 +48,14 @@ class Group(TypedDict):
     groupimageurl: str
 
 
+def _get_submission_files(submission: dict[str, Any]) -> list[dict[str, Any]]:
+    try:
+        file_areas = next(p for p in submission["plugins"] if p["name"] == "File submissions")["fileareas"]
+        return next(a for a in file_areas if a["area"] == "submission_files")["files"]
+    except StopIteration, KeyError:
+        return []
+
+
 @dataclass
 class MoodleConnection:
     url: str
@@ -95,7 +103,7 @@ class MoodleConnection:
         return data["assignments"][0]["submissions"]
 
     def get_groups(self, tutorials: list[str]) -> dict[int, str]:
-        pattern = re.compile(fr"tut(orium|orial)? ({'|'.join(tutorials)})", flags=re.IGNORECASE)
+        pattern = re.compile(rf"tut(orium|orial)? ({'|'.join(tutorials)})", flags=re.IGNORECASE)
         data = self.send("core_group_get_groups_for_selector", courseid=self.course)["groups"]
         parsed: dict[int, str] = {}
         for group in data:
@@ -103,51 +111,50 @@ class MoodleConnection:
                 parsed[int(group["id"])] = group["name"]
         return parsed
 
+    def get_submission_files(self, assignment_name: str, tutorials: list[str]) -> dict[str, list[str]]:
+        groups = self.get_groups(tutorials)
+        assignment_id: int = self.get_assignment(assignment_name)["id"]
+        submissions = self.get_assignment_submissions(assignment_id)
+        files: dict[str, list[str]] = {}
+        for submission in submissions:
+            if submission["groupid"] in groups and submission["status"] == "submitted":
+                submission_files = _get_submission_files(submission)
+                file_urls = [file["fileurl"] for file in submission_files]
+                files[groups[submission["groupid"]]] = file_urls
+        return files
 
-def get_submission_files(
-    app: _AppConfig,
-    course: _CourseConfig,
-    assignment_name: str,
-) -> dict[str, list[str]]:
-    moodle = MoodleConnection.from_configs(app, course)
-    groups = moodle.get_groups(course.tutorials)
-    assignment_id: int = moodle.get_assignment(assignment_name)["id"]
-    submissions = moodle.get_assignment_submissions(assignment_id)
-    files: dict[str, list[str]] = {}
-    for submission in submissions:
-        if submission["groupid"] in groups and submission["status"] == "submitted":
-            try:
-                file_areas = next(p for p in submission["plugins"] if p["name"] == "File submissions")["fileareas"]
-                submission_files = next(a for a in file_areas if a["area"] == "submission_files")["files"]
-            except StopIteration, KeyError:
-                continue
-            file_urls = [file["fileurl"] for file in submission_files]
-            files[groups[submission["groupid"]]] = file_urls
-    return files
+    def get_grading_data(self, assignment_name: str, groups: Iterable[str]) -> tuple[str, dict[str, list[str]]]:
+        assignment_id = self.get_assignment(assignment_name)["id"]
+        pattern = re.compile(r"tut(orium|orial)? (\d+)", flags=re.IGNORECASE)
+        tutorials = set()
+        for group in groups:
+            found = pattern.search(group)
+            if found is not None:
+                tutorials.add(found.group(2))
+        users = {}
+        for id, name in self.get_groups(list(tutorials)).items():
+            data = self.send(
+                "core_grades_get_enrolled_users_for_selector",
+                courseid=self.course,
+                groupid=id,
+            )
+            users[name] = [user["id"] for user in data["users"]]
+        return assignment_id, users
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    def upload_graded_assignment(self, assignment_id: str, users: list[str], file: Path, points: float) -> None:
+        file_id = self.upload_files([file])[0]["itemid"]
+        grades: ParamDataInner = [
+            {
+                "userid": user,
+                "grade": points,
+                "attemptnumber": -1,
+                "addattempt": 0,
+                "workflowstate": 0,
+                "plugindata": [{"files_filemanager": file_id}],
+            }
+            for user in users
+        ]
+        self.send("mod_assign_save_grades", assignmentid=assignment_id, grades=grades)
 
 
 """
