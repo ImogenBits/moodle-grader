@@ -80,13 +80,13 @@ class CourseConfig(BaseModel):
     def get(cls) -> Self:
         path = Path().absolute()
         while not path.joinpath(COURSE_CONFIG_NAME).exists():
-            parent = path.parent
-            if path == parent:
+            if path == path.parent:
                 console.print(
                     "[error]Could not find course config file in any parent folder.[/]\n"
                     "Please run the 'init' command in the course folder you want to use."
                 )
                 raise Abort
+            path = path.parent
         data = tomlkit.loads(path.joinpath(COURSE_CONFIG_NAME).read_text())
         return cls.model_validate(data)
 
