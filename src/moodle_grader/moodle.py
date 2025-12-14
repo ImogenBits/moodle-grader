@@ -123,7 +123,7 @@ class MoodleConnection:
                 files[groups[submission["groupid"]]] = file_urls
         return files
 
-    def get_grading_data(self, assignment_name: str, groups: Iterable[str]) -> tuple[str, dict[str, list[str]]]:
+    def get_grading_data(self, assignment_name: str, groups: Iterable[str]) -> tuple[int, dict[str, list[int]]]:
         assignment_id = self.get_assignment(assignment_name)["id"]
         pattern = re.compile(r"tut(orium|orial)? (\d+)", flags=re.IGNORECASE)
         tutorials = set()
@@ -141,7 +141,7 @@ class MoodleConnection:
             users[name] = [user["id"] for user in data["users"]]
         return assignment_id, users
 
-    def upload_graded_assignment(self, assignment_id: str, users: list[str], file: Path, points: float) -> None:
+    def upload_graded_assignment(self, assignment_id: int, users: list[int], file: Path, points: float) -> None:
         file_id = self.upload_files([file])[0]["itemid"]
         grades: ParamDataInner = [
             {
@@ -149,9 +149,11 @@ class MoodleConnection:
                 "grade": points,
                 "attemptnumber": -1,
                 "addattempt": 0,
-                "workflowstate": 0,
-                "plugindata": [{"files_filemanager": file_id}],
+                "workflowstate": "graded",
+                "plugindata": {"files_filemanager": file_id},
             }
             for user in users
         ]
-        self.send("mod_assign_save_grades", assignmentid=assignment_id, grades=grades)
+        ret = self.send("mod_assign_save_grades", assignmentid=assignment_id, grades=grades, applytoall=0)
+        if not ret:
+            raise RuntimeError("Unexpected error when uploading grades")
