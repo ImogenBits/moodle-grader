@@ -305,7 +305,7 @@ def upload(
         if points >= course.max_points / 2 and image is not None:
             modify_pdf(file, bonus_image=image)
 
-    for file in track(data.iterdir(), "Uploading files"):
+    for file in track(list(data.iterdir()), "Uploading files"):
         group = file.stem
         moodle.upload_graded_assignment(assignment_id, users[group], file, point_map[file])
 
