@@ -155,32 +155,3 @@ class MoodleConnection:
             for user in users
         ]
         self.send("mod_assign_save_grades", assignmentid=assignment_id, grades=grades)
-
-
-"""
-    def submit_files(self, assignment_id: int, files: Iterable[Path]) -> None:
-        file_info = self.upload_files(files)
-        assert len({info["itemid"] for info in file_info}) == 1
-        itemid = file_info[0]["itemid"]
-        res = self.send(
-            "mod_assign_save_submission",
-            {
-                "assignmentid": assignment_id,
-                "plugindata": {
-                    "files_filemanager": itemid,
-                    "onlinetext_editor": {
-                        "text": "test",
-                        "format": 1,
-                        "itemid": itemid,
-                    },
-                },
-            },
-        )
-        assert not res
-
-    def test(self) -> None:
-        assignment = self.get_assignment(2)
-        self.submit_files(assignment["id"], [Path("blep.txt"), Path("bloop.txt")])
-
-        print("yay")
-"""
