@@ -16,8 +16,8 @@ from rich.prompt import Confirm, Prompt
 from rich.theme import Theme
 from typer import Abort, Argument, Option, Typer, get_app_dir, launch
 
-from autograder.core import add_grading_page, get_points, modify_pdf
-from autograder.moodle import MoodleConnection
+from moodle_grader.moodle import MoodleConnection
+from moodle_grader.pdf import add_grading_page, get_points, modify_pdf
 
 APP_NAME = "moodle_pdf_autograder"
 COURSE_CONFIG_NAME = "moodle_grader.toml"

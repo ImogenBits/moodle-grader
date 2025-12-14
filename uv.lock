@@ -128,7 +128,7 @@ wheels = [
 ]
 
 [[package]]
-name = "moodle-pdf-grader"
+name = "moodle-grader"
 version = "0.0.1"
 source = { editable = "." }
 dependencies = [
