@@ -17,7 +17,7 @@ from rich.theme import Theme
 from typer import Abort, Argument, Option, Typer, get_app_dir, launch
 
 from moodle_grader.moodle import MoodleConnection
-from moodle_grader.pdf import add_grading_page, get_points, modify_pdf
+from moodle_grader.pdf import add_grading_page, get_metadata, modify_pdf
 
 APP_NAME = "moodle_pdf_autograder"
 COURSE_CONFIG_NAME = "moodle_grader.toml"
@@ -296,18 +296,20 @@ def upload(
     group_names = [path.stem for path in data.iterdir() if path.suffix == ".pdf"]
     with console.status("Getting assignment info"):
         assignment_id, users = moodle.get_grading_data(assignment, group_names)
-    point_map = {}
+    files: dict[Path, tuple[float, str]] = {}
     for file, image in zip(track(list(data.iterdir()), "Finalizing files"), select_image(insert_image), strict=False):
-        points = get_points(file)
+        points, name = get_metadata(file)
         if points is None:
             points = 0.0
-        point_map[file] = points
+        if name is None:
+            name = file.stem
+        files[file] = (points, name)
         if points >= course.max_points / 2 and image is not None:
             modify_pdf(file, bonus_image=image)
 
     for file in track(list(data.iterdir()), "Uploading files"):
-        group = file.stem
-        moodle.upload_graded_assignment(assignment_id, users[group], file, point_map[file])
+        points, name = files[file]
+        moodle.upload_graded_assignment(assignment_id, users[name], file, points)
 
 
 if __name__ == "__main__":

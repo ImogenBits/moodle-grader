@@ -63,6 +63,7 @@ def add_grading_page(
     student_file: Path, name: str, email: str, group: str, week: str, image: Path | None, output: Path | None = None
 ) -> None:
     pdf_file = PdfWriter(clone_from=student_file)
+    pdf_file.add_metadata({"/GroupName": group})
 
     with BytesIO() as bytes_io:
         canvas = Canvas(bytes_io, pagesize=A4)
@@ -74,18 +75,17 @@ def add_grading_page(
     pdf_file.write(output or student_file)
 
 
-def get_points(student_file: Path) -> float | None:
+def get_metadata(student_file: Path) -> tuple[float | None, str | None]:
     file = PdfReader(student_file)
-    data = file.get_form_text_fields().get("moodleGradeField")
-    if not data:
-        return None
-    try:
-        return float(data)
-    except ValueError:
+    points = file.get_form_text_fields().get("moodleGradeField")
+    assert file.metadata
+    name = file.metadata.get("/GroupName")
+    if points is not None:
         try:
-            return float(data.replace(",", "."))
+            points = float(points.replace(",", "."))
         except ValueError:
-            return None
+            points = None
+    return points, name
 
 
 def modify_pdf(student_file: Path, points: float | None = None, bonus_image: Path | None = None) -> None:
