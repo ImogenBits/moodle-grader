@@ -155,5 +155,5 @@ class MoodleConnection:
             for user in users
         ]
         ret = self.send("mod_assign_save_grades", assignmentid=assignment_id, grades=grades, applytoall=0)
-        if not ret:
-            raise RuntimeError("Unexpected error when uploading grades")
+        if ret:
+            raise RuntimeError("Unexpected error when uploading grades", ret)
