@@ -297,7 +297,8 @@ def upload(
     with console.status("Getting assignment info"):
         assignment_id, users = moodle.get_grading_data(assignment, group_names)
     files: dict[Path, tuple[float, str]] = {}
-    for file, image in zip(track(list(data.iterdir()), "Finalizing files"), select_image(insert_image), strict=False):
+    pdf_paths = [path for path in data.iterdir() if path.suffix == ".pdf"]
+    for file, image in zip(track(pdf_paths, "Finalizing files"), select_image(insert_image), strict=False):
         points, name = get_metadata(file)
         if points is None:
             points = 0.0
@@ -307,7 +308,7 @@ def upload(
         if points >= course.max_points / 2 and image is not None:
             modify_pdf(file, bonus_image=image)
 
-    for file in track(list(data.iterdir()), "Uploading files"):
+    for file in track(pdf_paths, "Uploading files"):
         points, name = files[file]
         moodle.upload_graded_assignment(assignment_id, users[name], file, points)
 
